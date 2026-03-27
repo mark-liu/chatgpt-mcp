@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chatgpt-mcp"
+version = "0.3.0"
+description = "MCP server for ChatGPT macOS desktop app — no focus stealing, clipboard paste, configurable polling"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [
+    { name = "Mark Liu" },
+]
+dependencies = ["mcp>=1.0.0"]
+readme = "README.md"
+keywords = ["mcp", "chatgpt", "macos", "automation", "applescript"]
+classifiers = [
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+]
+
+[project.urls]
+Homepage = "https://github.com/mark-liu/chatgpt-mcp"
+Issues = "https://github.com/mark-liu/chatgpt-mcp/issues"
+
+[project.scripts]
+chatgpt-mcp = "chatgpt_mcp.__main__:main"
