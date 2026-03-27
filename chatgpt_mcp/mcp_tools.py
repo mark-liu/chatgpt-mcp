@@ -2,6 +2,7 @@
 
 No focus stealing on reads, new conversation per ask,
 clipboard paste for formatting, configurable poll interval.
+Conversation management: list, navigate, read old chats.
 """
 import time
 from mcp.server.fastmcp import FastMCP
@@ -101,22 +102,31 @@ async def get_chatgpt_response(quick: bool = False) -> str:
         raise Exception(f"Failed to get response from ChatGPT: {e}")
 
 
-async def ask_chatgpt(prompt: str, quick: bool = False) -> str:
-    """Send a prompt to ChatGPT in a NEW conversation and return the response.
+async def ask_chatgpt(prompt: str, quick: bool = False,
+                      conversation: str | None = None) -> str:
+    """Send a prompt to ChatGPT and return the response.
 
     Args:
         prompt: The message to send.
         quick: If True, use short poll interval (5s) and short timeout (60s).
                Default False uses deep mode (900s poll, 3600s timeout).
+        conversation: Optional conversation title to continue. If provided,
+                      navigates to the matching sidebar conversation instead
+                      of opening a new one.
     """
     await check_chatgpt_access()
 
     try:
         automation = ChatGPTAutomation()
 
-        # Activate once, open new chat, paste prompt
-        automation.activate_chatgpt()
-        automation.new_conversation()
+        if conversation:
+            # Navigate to existing conversation (activates once internally)
+            automation.navigate_to_conversation(title=conversation)
+        else:
+            # Activate once, open new chat
+            automation.activate_chatgpt()
+            automation.new_conversation()
+
         automation.send_message_clipboard(prompt)
 
         # Wait for response (passive — no focus steal)
@@ -130,7 +140,8 @@ def setup_mcp_tools(mcp: FastMCP):
     """Register MCP tools."""
 
     @mcp.tool()
-    async def ask_chatgpt_tool(prompt: str, quick: bool = False) -> str:
+    async def ask_chatgpt_tool(prompt: str, quick: bool = False,
+                               conversation: str = "") -> str:
         """Send a prompt to ChatGPT and return the response.
 
         Args:
@@ -138,10 +149,52 @@ def setup_mcp_tools(mcp: FastMCP):
             quick: If True, poll every 5s with 60s timeout (for fast queries).
                    If False (default), poll every 15min with 1h timeout (for
                    deep research, o1, etc).
+            conversation: Optional conversation title to continue. If provided,
+                          navigates to the matching sidebar conversation instead
+                          of starting a new one. Substring match, case-insensitive.
         """
-        return await ask_chatgpt(prompt, quick=quick)
+        conv = conversation if conversation else None
+        return await ask_chatgpt(prompt, quick=quick, conversation=conv)
 
     @mcp.tool()
     async def get_chatgpt_response_tool() -> str:
         """Get the latest response from ChatGPT after sending a message."""
         return await get_chatgpt_response()
+
+    @mcp.tool()
+    async def list_conversations_tool() -> str:
+        """List conversations from the ChatGPT sidebar.
+
+        Reads the sidebar without stealing focus. Returns a JSON list of
+        conversations with index (1-based) and title.
+        """
+        await check_chatgpt_access()
+        try:
+            automation = ChatGPTAutomation()
+            conversations = automation.list_conversations()
+            if not conversations:
+                return "No conversations found in sidebar."
+            lines = [f"{c['index']}. {c['title']}" for c in conversations]
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Error listing conversations: {e}"
+
+    @mcp.tool()
+    async def read_conversation_tool(conversation: str) -> str:
+        """Navigate to a named conversation and read its content.
+
+        Args:
+            conversation: Title to match (substring, case-insensitive).
+        """
+        await check_chatgpt_access()
+        try:
+            automation = ChatGPTAutomation()
+            matched_title = automation.navigate_to_conversation(title=conversation)
+            # Give the conversation time to fully render
+            time.sleep(2)
+            text = get_current_conversation_text()
+            if not text or text == "No response received from ChatGPT.":
+                return f"Navigated to '{matched_title}' but no content found."
+            return f"=== {matched_title} ===\n\n{text}"
+        except Exception as e:
+            return f"Error reading conversation: {e}"
