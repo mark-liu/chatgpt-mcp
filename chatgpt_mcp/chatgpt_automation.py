@@ -101,24 +101,43 @@ class ChatGPTAutomation:
             return {"status": "error", "message": str(e)}
 
     def list_conversations(self) -> list[dict]:
-        """Read sidebar conversation list without stealing focus.
+        """List conversations via the Chats menu bar.
 
+        No focus steal — reads menu bar items without activating.
         Returns a list of dicts with 'index' (1-based) and 'title'.
-        Reads the AX tree passively — no activation, no focus steal.
         """
-        script_path = os.path.join(
-            os.path.dirname(__file__), "list_conversations.applescript"
+        script = (
+            'tell application "System Events"\n'
+            '  tell process "ChatGPT"\n'
+            '    set output to ""\n'
+            '    set chatMenu to menu 1 of menu bar item "Chats" of menu bar 1\n'
+            '    set chatItems to every menu item of chatMenu\n'
+            '    repeat with ci in chatItems\n'
+            '      set ciTitle to ""\n'
+            '      try\n'
+            '        set ciTitle to title of ci as text\n'
+            '      end try\n'
+            '      if ciTitle is not "" and ciTitle is not "missing value" then\n'
+            '        if output is not "" then set output to output & linefeed\n'
+            '        set output to output & ciTitle\n'
+            '      end if\n'
+            '    end repeat\n'
+            '    return output\n'
+            '  end tell\n'
+            'end tell\n'
         )
         try:
-            result = _run_osascript(script_path, text=True)
-            if result.returncode == 0:
-                data = json.loads(result.stdout)
-                if data.get("status") == "success":
-                    return data.get("conversations", [])
-                raise RuntimeError(data.get("message", "Unknown error"))
-            raise RuntimeError(result.stderr.strip() or "AppleScript failed")
-        except json.JSONDecodeError:
-            raise RuntimeError(f"JSON parse error: {result.stdout[:200]}")
+            result = _run_osascript("-e", script, text=True)
+            if result.returncode != 0 or not result.stdout.strip():
+                return []
+            conversations = []
+            for idx, line in enumerate(result.stdout.strip().split("\n"), 1):
+                title = line.strip()
+                if title:
+                    conversations.append({"index": idx, "title": title})
+            return conversations
+        except TimeoutError:
+            return []
 
     def navigate_to_conversation(
         self, *, title: str | None = None, index: int | None = None
@@ -165,47 +184,20 @@ class ChatGPTAutomation:
                     f"No conversation matching '{title}' found"
                 )
 
-        # Activate once — clicking requires focus
-        self.activate_chatgpt()
-
-        # Click the conversation by its title text in the sidebar.
-        # We use AXPress on the parent cell/row that contains the matching
-        # static text, or fall back to clicking the static text itself.
+        # Navigate via Chats menu — no AX tree search needed
         escaped_title = target["title"].replace("\\", "\\\\").replace('"', '\\"')
         script = f'''
-        tell application "System Events"
-            tell process "ChatGPT"
-                set allElements to entire contents of window 1
-                repeat with elem in allElements
-                    try
-                        if class of elem is static text then
-                            set txt to value of elem
-                            if txt is "{escaped_title}" then
-                                -- Try clicking the parent (row/cell) first
-                                set parentElem to value of attribute "AXParent" of elem
-                                try
-                                    click parentElem
-                                on error
-                                    click elem
-                                end try
-                                return "ok"
-                            end if
-                        end if
-                    end try
-                end repeat
-                return "not_found"
-            end tell
-        end tell
-        '''
+tell application "System Events"
+    tell process "ChatGPT"
+        click menu item "{escaped_title}" of menu 1 of menu bar item "Chats" of menu bar 1
+    end tell
+end tell
+'''
         result = _run_osascript("-e", script, text=True)
         if result.returncode != 0:
             raise RuntimeError(f"Navigation failed: {result.stderr.strip()}")
-        if result.stdout.strip() == "not_found":
-            raise RuntimeError(
-                f"Could not find clickable element for '{target['title']}'"
-            )
 
-        time.sleep(1)  # Let the conversation load
+        time.sleep(1.5)  # Let the conversation load
         return target["title"]
 
 

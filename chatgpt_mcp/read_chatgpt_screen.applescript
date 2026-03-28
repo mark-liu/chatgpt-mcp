@@ -27,14 +27,21 @@ on run
 					-- Collect static texts
 					if elemClass is static text then
 						try
-							set textContent to value of elem
-							if textContent is missing value then
+							-- Try description first (ChatGPT macOS uses
+							-- SwiftUI which exposes text via description,
+							-- not value)
+							set textContent to missing value
+							try
 								set textContent to description of elem
+							end try
+							if textContent is missing value or textContent is "" or textContent is "text" then
+								try
+									set textContent to value of elem
+								end try
 							end if
 
 							if textContent is not missing value and length of textContent > 0 then
-								set trimmedText to textContent
-								if trimmedText is not equal to "" and trimmedText is not equal to " " then
+								if textContent is not equal to "" and textContent is not equal to " " and textContent is not equal to "text" then
 									set end of allTexts to textContent
 								end if
 							end if
