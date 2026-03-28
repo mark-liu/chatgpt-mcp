@@ -33,15 +33,21 @@ ChatGPT Pro has models and features (o1 pro, deep research, custom GPTs) that ar
 ## Install
 
 ```bash
-pip install chatgpt-mcp
-# or
-uvx chatgpt-mcp
+pip install git+https://github.com/mark-liu/chatgpt-mcp.git
 ```
+
+Or run without installing:
+
+```bash
+uvx --from git+https://github.com/mark-liu/chatgpt-mcp.git chatgpt-mcp
+```
+
+PyPI: `pip install chatgpt-desktop-mcp` once published (name `chatgpt-mcp` is taken upstream).
 
 ## Configure with Claude Code
 
 ```bash
-claude mcp add chatgpt -- uvx chatgpt-mcp
+claude mcp add chatgpt -s user -- uvx --from git+https://github.com/mark-liu/chatgpt-mcp.git chatgpt-mcp
 ```
 
 ## Requirements
