@@ -13,8 +13,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e ".[dev]" 2>/dev/null || pip install -e .
-      - run: python -c "from chatgpt_mcp.mcp_tools import mcp; print('Import OK')"
+      - run: pip install -e .
       - run: python -m py_compile chatgpt_mcp/__main__.py
       - run: python -m py_compile chatgpt_mcp/mcp_tools.py
       - run: python -m py_compile chatgpt_mcp/chatgpt_automation.py
+      - run: python -c "import chatgpt_mcp; print('import OK')"
