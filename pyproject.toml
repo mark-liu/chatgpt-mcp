@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chatgpt-desktop-mcp"
-version = "0.3.0"
+version = "0.3.2"
 description = "MCP server for ChatGPT macOS desktop app — no focus stealing, clipboard paste, configurable polling"
 requires-python = ">=3.11"
 license = "MIT"
