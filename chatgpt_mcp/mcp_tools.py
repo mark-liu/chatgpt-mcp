@@ -158,8 +158,13 @@ def setup_mcp_tools(mcp: FastMCP):
 
     @mcp.tool()
     async def get_chatgpt_response_tool() -> str:
-        """Get the latest response from ChatGPT after sending a message."""
-        return await get_chatgpt_response()
+        """Get the current conversation text from ChatGPT immediately.
+
+        Returns whatever is on screen right now — no polling, no waiting.
+        Use ask_chatgpt_tool if you need to send a message and wait for a response.
+        """
+        await check_chatgpt_access()
+        return get_current_conversation_text()
 
     @mcp.tool()
     async def list_conversations_tool() -> str:
