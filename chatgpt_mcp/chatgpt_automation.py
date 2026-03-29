@@ -36,7 +36,7 @@ class ChatGPTAutomation:
     def activate_chatgpt(self):
         """Bring ChatGPT to front (only called once at send time, not on reads)."""
         _run_osascript("-e", 'tell application "ChatGPT" to activate')
-        time.sleep(1)
+        time.sleep(0.5)
 
     def new_conversation(self):
         """Start a new conversation via Cmd+N."""
@@ -48,14 +48,14 @@ class ChatGPTAutomation:
         end tell
         '''
         _run_osascript("-e", script)
-        time.sleep(1)
+        time.sleep(0.5)
 
     def send_message_clipboard(self, message: str):
         """Send message via clipboard paste — preserves formatting, instant."""
-        # Save current clipboard
-        old_clip = _run_osascript(
-            "-e", 'the clipboard as text', text=True
-        ).stdout
+        # Save current clipboard as raw bytes (preserves images, rich text)
+        old_clip = subprocess.run(
+            ["pbpaste"], capture_output=True, timeout=APPLESCRIPT_TIMEOUT,
+        ).stdout  # bytes
 
         # Set clipboard to message
         subprocess.run(
@@ -76,10 +76,10 @@ class ChatGPTAutomation:
         '''
         _run_osascript("-e", script)
 
-        # Restore clipboard
+        # Restore clipboard (raw bytes)
         time.sleep(0.5)
         subprocess.run(
-            ["pbcopy"], input=old_clip.encode(),
+            ["pbcopy"], input=old_clip,
             capture_output=True, timeout=APPLESCRIPT_TIMEOUT,
         )
 
@@ -197,27 +197,27 @@ end tell
         if result.returncode != 0:
             raise RuntimeError(f"Navigation failed: {result.stderr.strip()}")
 
-        time.sleep(1.5)  # Let the conversation load
+        time.sleep(1)  # Let the conversation load
         return target["title"]
 
 
 async def check_chatgpt_access() -> bool:
-    """Check if ChatGPT app is installed and running."""
-    try:
-        result = _run_osascript(
-            "-e",
-            'tell application "System Events" to return '
-            'application process "ChatGPT" exists',
-            text=True,
-        )
-        if result.stdout.strip() != "true":
-            try:
-                _run_osascript(
-                    "-e", 'tell application "ChatGPT" to activate',
-                    "-e", "delay 2",
-                )
-            except (subprocess.CalledProcessError, TimeoutError):
-                raise Exception("Could not activate ChatGPT app.")
-        return True
-    except Exception as e:
-        raise Exception(f"Cannot access ChatGPT app: {e}")
+    """Check if ChatGPT app is running — never activate it."""
+    result = _run_osascript(
+        "-e",
+        'tell application "System Events" to return '
+        'application process "ChatGPT" exists',
+        text=True,
+    )
+    if result.stdout.strip() != "true":
+        raise Exception("ChatGPT app is not running. Open it first.")
+    # Check window exists
+    result2 = _run_osascript(
+        "-e",
+        'tell application "System Events" to tell process "ChatGPT" '
+        'to return count of windows',
+        text=True,
+    )
+    if result2.stdout.strip() == "0":
+        raise Exception("ChatGPT has no visible window. Open the app window.")
+    return True

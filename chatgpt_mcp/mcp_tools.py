@@ -11,7 +11,7 @@ from chatgpt_mcp.chatgpt_automation import ChatGPTAutomation, check_chatgpt_acce
 # Poll intervals for quick vs deep modes
 QUICK_POLL_INTERVAL = 5
 QUICK_MAX_WAIT = 60
-DEEP_POLL_INTERVAL = 900
+DEEP_POLL_INTERVAL = 120
 DEEP_MAX_WAIT = 3600
 
 # Text stability: consider complete after N consecutive identical reads

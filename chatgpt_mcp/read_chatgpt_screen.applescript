@@ -24,19 +24,31 @@ on run
 				try
 					set elemClass to class of elem
 
-					-- Collect static texts
+					-- Collect static texts via multi-attribute fallback chain
 					if elemClass is static text then
 						try
-							-- Try description first (ChatGPT macOS uses
-							-- SwiftUI which exposes text via description,
-							-- not value)
 							set textContent to missing value
+
+							-- 1. description (SwiftUI primary path)
 							try
 								set textContent to description of elem
 							end try
 							if textContent is missing value or textContent is "" or textContent is "text" then
+								-- 2. value
 								try
 									set textContent to value of elem
+								end try
+							end if
+							if textContent is missing value or textContent is "" or textContent is "text" then
+								-- 3. accessibility description
+								try
+									set textContent to accessibility description of elem
+								end try
+							end if
+							if textContent is missing value or textContent is "" or textContent is "text" then
+								-- 4. help attribute
+								try
+									set textContent to help of elem
 								end try
 							end if
 
@@ -48,12 +60,63 @@ on run
 						end try
 					end if
 
-					-- Collect buttons for sequence analysis
+					-- Check groups/buttons for text via name or title
+					if elemClass is group or elemClass is button then
+						if elemClass is button then
+							set end of buttonsList to elem
+						end if
+						try
+							set textContent to missing value
+							try
+								set textContent to name of elem
+							end try
+							if textContent is missing value or textContent is "" then
+								try
+									set textContent to title of elem
+								end try
+							end if
+							-- Only collect if it looks like real content (>2 chars)
+							if textContent is not missing value and length of textContent > 2 then
+								set end of allTexts to textContent
+							end if
+						end try
+					end if
+
+					-- Collect remaining buttons (not group-or-button)
 					if elemClass is button then
-						set end of buttonsList to elem
+						-- already added above
 					end if
 				end try
 			end repeat
+
+			-- Fallback: if zero texts found, try AXValue on scroll area content
+			if (count of allTexts) is 0 then
+				try
+					set scrollAreas to every scroll area of window 1
+					repeat with sa in scrollAreas
+						try
+							set saVal to value of sa
+							if saVal is not missing value and saVal is not "" then
+								set end of allTexts to saVal
+							end if
+						end try
+						-- Try AXValue on children of the scroll area
+						try
+							set saChildren to entire contents of sa
+							repeat with sc in saChildren
+								try
+									set scVal to value of sc
+									if scVal is not missing value and length of scVal > 0 then
+										if scVal is not equal to "" and scVal is not equal to " " then
+											set end of allTexts to scVal
+										end if
+									end if
+								end try
+							end repeat
+						end try
+					end repeat
+				end try
+			end if
 
 			-- Universal conversation completion detection
 			set conversationComplete to false
