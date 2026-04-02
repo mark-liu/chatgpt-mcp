@@ -57,31 +57,32 @@ class ChatGPTAutomation:
             ["pbpaste"], capture_output=True, timeout=APPLESCRIPT_TIMEOUT,
         ).stdout  # bytes
 
-        # Set clipboard to message
-        subprocess.run(
-            ["pbcopy"], input=message.encode(),
-            capture_output=True, timeout=APPLESCRIPT_TIMEOUT,
-        )
-        time.sleep(0.2)
+        try:
+            # Set clipboard to message
+            subprocess.run(
+                ["pbcopy"], input=message.encode(),
+                capture_output=True, timeout=APPLESCRIPT_TIMEOUT,
+            )
+            time.sleep(0.2)
 
-        # Paste and send
-        script = '''
-        tell application "System Events"
-            tell process "ChatGPT"
-                keystroke "v" using command down
-                delay 0.3
-                key code 36
+            # Paste and send
+            script = '''
+            tell application "System Events"
+                tell process "ChatGPT"
+                    keystroke "v" using command down
+                    delay 0.3
+                    key code 36
+                end tell
             end tell
-        end tell
-        '''
-        _run_osascript("-e", script)
-
-        # Restore clipboard (raw bytes)
-        time.sleep(0.5)
-        subprocess.run(
-            ["pbcopy"], input=old_clip,
-            capture_output=True, timeout=APPLESCRIPT_TIMEOUT,
-        )
+            '''
+            _run_osascript("-e", script)
+        finally:
+            # Always restore clipboard, even if paste/send fails
+            time.sleep(0.5)
+            subprocess.run(
+                ["pbcopy"], input=old_clip,
+                capture_output=True, timeout=APPLESCRIPT_TIMEOUT,
+            )
 
     def read_screen_content(self) -> dict:
         """Read ChatGPT screen WITHOUT stealing focus."""
