@@ -4,6 +4,7 @@ No focus stealing on reads, new conversation per ask,
 clipboard paste for formatting, configurable poll interval.
 Conversation management: list, navigate, read old chats.
 """
+import asyncio
 import time
 from mcp.server.fastmcp import FastMCP
 from chatgpt_mcp.chatgpt_automation import ChatGPTAutomation, check_chatgpt_access
@@ -52,8 +53,8 @@ def get_current_conversation_text() -> str:
         return f"Error reading conversation: {e}"
 
 
-def wait_for_response_completion(max_wait_time: int = DEEP_MAX_WAIT,
-                                 check_interval: float = DEEP_POLL_INTERVAL) -> bool:
+async def wait_for_response_completion(max_wait_time: int = DEEP_MAX_WAIT,
+                                       check_interval: float = DEEP_POLL_INTERVAL) -> bool:
     """Wait for ChatGPT response to complete.
 
     Uses two signals:
@@ -82,7 +83,7 @@ def wait_for_response_completion(max_wait_time: int = DEEP_MAX_WAIT,
             stable_count = 0
             last_text = current_text
 
-        time.sleep(check_interval)
+        await asyncio.sleep(check_interval)
     return False
 
 
@@ -94,8 +95,8 @@ async def get_chatgpt_response(quick: bool = False) -> str:
         max_wait, interval = DEEP_MAX_WAIT, DEEP_POLL_INTERVAL
 
     try:
-        if wait_for_response_completion(max_wait_time=max_wait,
-                                        check_interval=interval):
+        if await wait_for_response_completion(max_wait_time=max_wait,
+                                              check_interval=interval):
             return get_current_conversation_text()
         return "Timeout: ChatGPT response did not complete within the time limit."
     except Exception as e:
