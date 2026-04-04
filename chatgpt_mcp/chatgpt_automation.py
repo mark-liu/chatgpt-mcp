@@ -185,16 +185,20 @@ class ChatGPTAutomation:
                     f"No conversation matching '{title}' found"
                 )
 
-        # Navigate via Chats menu — no AX tree search needed
-        escaped_title = target["title"].replace("\\", "\\\\").replace('"', '\\"')
-        script = f'''
-tell application "System Events"
-    tell process "ChatGPT"
-        click menu item "{escaped_title}" of menu 1 of menu bar item "Chats" of menu bar 1
+        # Navigate via Chats menu — no AX tree search needed.
+        # Pass the title as a positional argv to osascript to prevent
+        # AppleScript injection (no string interpolation).
+        script = '''
+on run argv
+    set chatTitle to item 1 of argv
+    tell application "System Events"
+        tell process "ChatGPT"
+            click menu item chatTitle of menu 1 of menu bar item "Chats" of menu bar 1
+        end tell
     end tell
-end tell
+end run
 '''
-        result = _run_osascript("-e", script, text=True)
+        result = _run_osascript("-", target["title"], text=True, input=script)
         if result.returncode != 0:
             raise RuntimeError(f"Navigation failed: {result.stderr.strip()}")
 
