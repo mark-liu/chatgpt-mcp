@@ -121,12 +121,35 @@ on run
 			-- Universal conversation completion detection
 			set conversationComplete to false
 			set foundModelButton to false
+			set isGenerating to false
 
 			repeat with i from 1 to count of buttonsList
 				try
 					set currentButton to item i of buttonsList
 					set btnHelp to help of currentButton
 					set btnValue to value of currentButton
+
+					-- Detect active generation: "Stop" button present
+					if btnHelp is not missing value then
+						if (btnHelp contains "Stop" or btnHelp contains "stop") then
+							set isGenerating to true
+						end if
+					end if
+					if btnValue is not missing value then
+						if (btnValue contains "Stop" or btnValue is "Stop generating") then
+							set isGenerating to true
+						end if
+					end if
+
+					-- Check for "thinking" indicator via button name
+					try
+						set btnName to name of currentButton
+						if btnName is not missing value then
+							if (btnName contains "Stop" or btnName contains "stop") then
+								set isGenerating to true
+							end if
+						end if
+					end try
 
 					-- Check if this is the model selection button
 					if btnValue is not missing value and btnHelp is not missing value then
@@ -165,6 +188,16 @@ on run
 				end repeat
 			end if
 
+			-- Also detect "Thinking" / "Searching" static text as generation signal
+			repeat with txtItem in allTexts
+				try
+					if txtItem starts with "Thinking" or txtItem starts with "Searching" or txtItem starts with "Browsing" or txtItem starts with "Analyzing" or txtItem starts with "Reading" then
+						set isGenerating to true
+						exit repeat
+					end if
+				end try
+			end repeat
+
 			-- Build simplified JSON result
 			set jsonResult to "{\"status\": \"success\", "
 
@@ -185,9 +218,10 @@ on run
 
 			set jsonResult to jsonResult & "], "
 
-			-- Add only the essential indicator
+			-- Add indicators
 			set jsonResult to jsonResult & "\"indicators\": {"
 			set jsonResult to jsonResult & "\"conversationComplete\": " & conversationComplete
+			set jsonResult to jsonResult & ", \"isGenerating\": " & isGenerating
 			set jsonResult to jsonResult & "}}"
 
 			return jsonResult

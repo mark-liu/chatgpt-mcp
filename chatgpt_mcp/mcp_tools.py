@@ -19,48 +19,81 @@ DEEP_MAX_WAIT = 3600
 TEXT_STABILITY_THRESHOLD = 3
 
 
-def is_conversation_complete() -> bool:
-    """Check if ChatGPT conversation is complete (no focus steal)."""
+def _read_screen() -> dict:
+    """Read screen and return raw parsed data (no focus steal)."""
     try:
         automation = ChatGPTAutomation()
-        screen_data = automation.read_screen_content()
-        if screen_data.get("status") == "success":
-            indicators = screen_data.get("indicators", {})
-            return indicators.get("conversationComplete", False)
-        return False
-    except Exception:
-        return False
+        return automation.read_screen_content()
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+def _extract_text(screen_data: dict) -> str:
+    """Extract and clean conversation text from screen data."""
+    texts = screen_data.get("texts", [])
+    current_content = "\n".join(texts)
+    cleaned = current_content.strip()
+    cleaned = (
+        cleaned.replace("Regenerate", "")
+        .replace("Continue generating", "")
+        .replace("\u258d", "")
+        .strip()
+    )
+    return cleaned
+
+
+def is_conversation_complete() -> bool:
+    """Check if ChatGPT conversation is complete (no focus steal)."""
+    screen_data = _read_screen()
+    if screen_data.get("status") == "success":
+        indicators = screen_data.get("indicators", {})
+        return indicators.get("conversationComplete", False)
+    return False
+
+
+def is_generating() -> bool:
+    """Check if ChatGPT is actively generating (Stop button or thinking text)."""
+    screen_data = _read_screen()
+    if screen_data.get("status") == "success":
+        indicators = screen_data.get("indicators", {})
+        return indicators.get("isGenerating", False)
+    return False
+
+
+def get_screen_state() -> tuple[str, bool, bool]:
+    """Get text, completion status, and generation status in one read.
+
+    Returns:
+        (text, is_complete, is_generating)
+    """
+    screen_data = _read_screen()
+    if screen_data.get("status") != "success":
+        return (f"Failed to read ChatGPT screen: {screen_data.get('message', 'unknown')}", False, False)
+    indicators = screen_data.get("indicators", {})
+    text = _extract_text(screen_data) or "No response received from ChatGPT."
+    complete = indicators.get("conversationComplete", False)
+    generating = indicators.get("isGenerating", False)
+    return (text, complete, generating)
 
 
 def get_current_conversation_text() -> str:
     """Get the current conversation text from ChatGPT (no focus steal)."""
-    try:
-        automation = ChatGPTAutomation()
-        screen_data = automation.read_screen_content()
-        if screen_data.get("status") == "success":
-            texts = screen_data.get("texts", [])
-            current_content = "\n".join(texts)
-            cleaned = current_content.strip()
-            cleaned = (
-                cleaned.replace("Regenerate", "")
-                .replace("Continue generating", "")
-                .replace("\u258d", "")
-                .strip()
-            )
-            return cleaned if cleaned else "No response received from ChatGPT."
-        return "Failed to read ChatGPT screen."
-    except Exception as e:
-        return f"Error reading conversation: {e}"
+    text, _, _ = get_screen_state()
+    return text
 
 
 async def wait_for_response_completion(max_wait_time: int = DEEP_MAX_WAIT,
                                        check_interval: float = DEEP_POLL_INTERVAL) -> bool:
     """Wait for ChatGPT response to complete.
 
-    Uses two signals:
+    Uses three signals:
     1. Button heuristic — AppleScript detects model/voice button sequence
-    2. Text stability — if conversation text is identical for 3 consecutive
-       reads, consider it complete (catches cases the button heuristic misses)
+    2. Generation detection — Stop button or "Thinking" text means still working
+    3. Text stability — if text is identical for N consecutive reads AND not
+       generating, consider it complete (catches button heuristic misses)
+
+    Text stability is suppressed while isGenerating is True, preventing
+    false completions during deep research / o1 thinking phases.
 
     No focus stealing during the wait — reads screen content passively.
     """
@@ -69,19 +102,27 @@ async def wait_for_response_completion(max_wait_time: int = DEEP_MAX_WAIT,
     stable_count = 0
 
     while time.time() - start_time < max_wait_time:
-        # Signal 1: button heuristic
-        if is_conversation_complete():
+        text, complete, generating = get_screen_state()
+
+        # Signal 1: button heuristic says done
+        if complete:
             return True
 
-        # Signal 2: text stability fallback
-        current_text = get_current_conversation_text()
-        if current_text and current_text == last_text:
+        # Signal 2: if actively generating, reset stability counter
+        if generating:
+            stable_count = 0
+            last_text = text
+            await asyncio.sleep(check_interval)
+            continue
+
+        # Signal 3: text stability fallback (only when NOT generating)
+        if text and text == last_text:
             stable_count += 1
             if stable_count >= TEXT_STABILITY_THRESHOLD:
                 return True
         else:
             stable_count = 0
-            last_text = current_text
+            last_text = text
 
         await asyncio.sleep(check_interval)
     return False
@@ -162,10 +203,17 @@ def setup_mcp_tools(mcp: FastMCP):
         """Get the current conversation text from ChatGPT immediately.
 
         Returns whatever is on screen right now — no polling, no waiting.
+        Includes status: whether ChatGPT is still generating, complete, or idle.
         Use ask_chatgpt_tool if you need to send a message and wait for a response.
         """
         await check_chatgpt_access()
-        return get_current_conversation_text()
+        text, complete, generating = get_screen_state()
+        if generating:
+            return f"[STILL GENERATING] ChatGPT is still working on a response. Check back later.\n\nPartial content so far:\n{text}"
+        if complete:
+            return text
+        # Neither generating nor complete — idle or ambiguous
+        return text
 
     @mcp.tool()
     async def list_conversations_tool() -> str:
