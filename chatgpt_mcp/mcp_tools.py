@@ -18,6 +18,18 @@ DEEP_MAX_WAIT = 3600
 # Text stability: consider complete after N consecutive identical reads
 TEXT_STABILITY_THRESHOLD = 3
 
+# Grace period after sending before polling — lets GPT transition from
+# idle state (model+voice buttons visible) to generating state (Stop
+# button visible). Without this, the first poll sees the old completion
+# indicators and returns immediately with just the prompt.
+POST_SEND_GRACE_SECONDS = 5
+
+# How long to wait for generation to begin after sending (seconds).
+# If neither isGenerating nor text-changed within this window, fall
+# through to normal polling (handles edge case where GPT responds
+# instantly for cached/short answers).
+GENERATION_START_TIMEOUT = 30
+
 
 def _read_screen() -> dict:
     """Read screen and return raw parsed data (no focus steal)."""
@@ -83,10 +95,16 @@ def get_current_conversation_text() -> str:
 
 
 async def wait_for_response_completion(max_wait_time: int = DEEP_MAX_WAIT,
-                                       check_interval: float = DEEP_POLL_INTERVAL) -> bool:
+                                       check_interval: float = DEEP_POLL_INTERVAL,
+                                       sent_text: str = "") -> bool:
     """Wait for ChatGPT response to complete.
 
-    Uses three signals:
+    Two-phase approach:
+      Phase 1 — Wait for generation to START (avoids returning stale
+                completion state from before the message was sent).
+      Phase 2 — Wait for generation to FINISH.
+
+    Phase 2 uses three signals:
     1. Button heuristic — AppleScript detects model/voice button sequence
     2. Generation detection — Stop button or "Thinking" text means still working
     3. Text stability — if text is identical for N consecutive reads AND not
@@ -96,40 +114,100 @@ async def wait_for_response_completion(max_wait_time: int = DEEP_MAX_WAIT,
     false completions during deep research / o1 thinking phases.
 
     No focus stealing during the wait — reads screen content passively.
+
+    Args:
+        sent_text: The prompt that was just sent. Used to detect when the
+                   response has actually appeared (text differs from prompt).
     """
     start_time = time.time()
+
+    # -- Phase 1: wait for generation to begin --
+    # After sending, old UI state may linger (conversationComplete=True,
+    # isGenerating=False) for a moment. We wait until either:
+    #   a) isGenerating becomes True, or
+    #   b) screen text changes from what we sent (GPT responded instantly)
+    # with a hard timeout so we don't block forever on edge cases.
+    generation_started = False
+    phase1_deadline = start_time + GENERATION_START_TIMEOUT
+
+    while time.time() < phase1_deadline:
+        text, complete, generating = get_screen_state()
+
+        if generating:
+            generation_started = True
+            break
+
+        # Text changed meaningfully — GPT responded (possibly instantly)
+        if sent_text and text and _text_differs(text, sent_text):
+            generation_started = True
+            break
+
+        await asyncio.sleep(2)  # fast poll during phase 1
+
+    # -- Phase 2: wait for generation to finish --
     last_text = ""
     stable_count = 0
 
     while time.time() - start_time < max_wait_time:
         text, complete, generating = get_screen_state()
 
-        # Signal 1: button heuristic says done
-        if complete:
-            return True
+        # Signal 1: button heuristic says done — but ONLY trust it if
+        # generation already started (or phase 1 timed out).
+        if complete and generation_started:
+            # Extra guard: make sure we have more than just the prompt
+            if not sent_text or _text_differs(text, sent_text):
+                return True
 
         # Signal 2: if actively generating, reset stability counter
         if generating:
+            generation_started = True  # confirm generation seen
             stable_count = 0
             last_text = text
             await asyncio.sleep(check_interval)
             continue
 
         # Signal 3: text stability fallback (only when NOT generating)
-        if text and text == last_text:
-            stable_count += 1
-            if stable_count >= TEXT_STABILITY_THRESHOLD:
-                return True
-        else:
-            stable_count = 0
-            last_text = text
+        # Only triggers after generation has started or phase 1 timed out
+        if generation_started or time.time() > phase1_deadline:
+            if text and text == last_text:
+                stable_count += 1
+                if stable_count >= TEXT_STABILITY_THRESHOLD:
+                    return True
+            else:
+                stable_count = 0
+                last_text = text
 
         await asyncio.sleep(check_interval)
     return False
 
 
-async def get_chatgpt_response(quick: bool = False) -> str:
-    """Get the latest response from ChatGPT after sending a message."""
+def _text_differs(current: str, sent: str) -> bool:
+    """Check if current screen text meaningfully differs from the sent prompt.
+
+    Simple heuristic: if current text is substantially longer than the sent
+    prompt, or doesn't start with the sent text, something new appeared.
+    """
+    sent_stripped = sent.strip()[:200]  # compare first 200 chars only
+    current_stripped = current.strip()
+
+    # Much longer → response appeared
+    if len(current_stripped) > len(sent_stripped) + 100:
+        return True
+
+    # Doesn't even contain the sent text → UI refreshed
+    if sent_stripped and sent_stripped[:80] not in current_stripped:
+        return True
+
+    return False
+
+
+async def get_chatgpt_response(quick: bool = False, sent_text: str = "") -> str:
+    """Get the latest response from ChatGPT after sending a message.
+
+    Args:
+        sent_text: The prompt that was sent. Passed to polling so it can
+                   distinguish "GPT hasn't started yet" from "GPT is done".
+    """
     if quick:
         max_wait, interval = QUICK_MAX_WAIT, QUICK_POLL_INTERVAL
     else:
@@ -137,7 +215,8 @@ async def get_chatgpt_response(quick: bool = False) -> str:
 
     try:
         if await wait_for_response_completion(max_wait_time=max_wait,
-                                              check_interval=interval):
+                                              check_interval=interval,
+                                              sent_text=sent_text):
             return get_current_conversation_text()
         return "Timeout: ChatGPT response did not complete within the time limit."
     except Exception as e:
@@ -171,8 +250,12 @@ async def ask_chatgpt(prompt: str, quick: bool = False,
 
         automation.send_message_clipboard(prompt)
 
+        # Grace period: let UI transition from idle → generating.
+        # Without this, the first poll sees stale completion indicators.
+        await asyncio.sleep(POST_SEND_GRACE_SECONDS)
+
         # Wait for response (passive — no focus steal)
-        return await get_chatgpt_response(quick=quick)
+        return await get_chatgpt_response(quick=quick, sent_text=prompt)
 
     except Exception as e:
         raise Exception(f"Failed to send message to ChatGPT: {e}")
@@ -203,17 +286,21 @@ def setup_mcp_tools(mcp: FastMCP):
         """Get the current conversation text from ChatGPT immediately.
 
         Returns whatever is on screen right now — no polling, no waiting.
-        Includes status: whether ChatGPT is still generating, complete, or idle.
+        Prefixes status so callers know the state:
+          [GENERATING] — Stop button or thinking text detected
+          [COMPLETE]   — model+voice buttons detected (idle/done)
+          [UNKNOWN]    — neither signal detected (may still be loading)
         Use ask_chatgpt_tool if you need to send a message and wait for a response.
         """
         await check_chatgpt_access()
         text, complete, generating = get_screen_state()
         if generating:
-            return f"[STILL GENERATING] ChatGPT is still working on a response. Check back later.\n\nPartial content so far:\n{text}"
+            return f"[GENERATING] ChatGPT is still working. Check back later.\n\nPartial content so far:\n{text}"
         if complete:
-            return text
-        # Neither generating nor complete — idle or ambiguous
-        return text
+            return f"[COMPLETE]\n{text}"
+        # Neither generating nor complete — could be transitioning or
+        # the button heuristic missed. Flag as unknown.
+        return f"[UNKNOWN] Could not determine if ChatGPT is done or still working.\n\n{text}"
 
     @mcp.tool()
     async def list_conversations_tool() -> str:

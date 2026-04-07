@@ -188,15 +188,30 @@ on run
 				end repeat
 			end if
 
-			-- Also detect "Thinking" / "Searching" static text as generation signal
+			-- Detect thinking/reasoning/searching text as generation signal.
+			-- ChatGPT models use varying labels: o1 shows "Thinking",
+			-- 5.4o shows "Reasoning", deep research shows "Searching", etc.
 			repeat with txtItem in allTexts
 				try
-					if txtItem starts with "Thinking" or txtItem starts with "Searching" or txtItem starts with "Browsing" or txtItem starts with "Analyzing" or txtItem starts with "Reading" then
+					if txtItem starts with "Thinking" or txtItem starts with "Searching" or txtItem starts with "Browsing" or txtItem starts with "Analyzing" or txtItem starts with "Reading" or txtItem starts with "Reasoning" or txtItem starts with "Working" or txtItem starts with "Planning" then
 						set isGenerating to true
 						exit repeat
 					end if
 				end try
 			end repeat
+
+			-- Also check for thinking indicators that may appear as
+			-- shorter tokens (e.g. just the word with a spinner).
+			if not isGenerating then
+				repeat with txtItem in allTexts
+					try
+						if txtItem is "Thinking…" or txtItem is "Reasoning…" or txtItem is "Searching…" then
+							set isGenerating to true
+							exit repeat
+						end if
+					end try
+				end repeat
+			end if
 
 			-- Build simplified JSON result
 			set jsonResult to "{\"status\": \"success\", "
